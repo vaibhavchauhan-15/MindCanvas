@@ -1,27 +1,65 @@
-import React, { useCallback, useEffect } from 'react';
+import React, { useCallback, useEffect, useState, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import ReactFlow, {
-  Controls,
   Background,
-  useNodesState,
-  useEdgesState,
-  addEdge,
   Connection,
   Edge,
   Node,
-  Viewport,
+  NodeTypes,
+  Panel,
+  useNodesState,
+  useEdgesState,
+  addEdge,
+  useReactFlow,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
+
 import { useAppStore } from '../store';
+import { useCanvasKeyboardControls } from '../hooks/useCanvasKeyboardShortcuts';
+import { useCanvasAnimations } from '../hooks/useCanvasAnimations';
+import CanvasToolbar from '../components/canvas/CanvasToolbar';
+import CanvasSidebar from '../components/canvas/CanvasSidebar';
+import CanvasControls from '../components/canvas/CanvasControls';
+import MindNode from '../components/nodes/MindNode';
+import NodeEditDialog from '../components/nodes/NodeEditDialog';
+import { Button, Dialog } from '../components/ui/design-system';
+import KeyboardShortcutsHelp from '../components/canvas/KeyboardShortcutsHelp';
+import { useTheme } from '../components/ui/theme';
+
+// Additional imports...
+const nodeTypes: NodeTypes = {
+  mindNode: MindNode,
+};
 
 const Canvas: React.FC = () => {
   const { projectId } = useParams();
   const navigate = useNavigate();
-  const { currentProject, projects, setCurrentProject, addNode } = useAppStore();
-  
+  const { mode } = useTheme();
+  const { 
+    currentProject, 
+    projects, 
+    setCurrentProject, 
+    addNode, 
+    updateNodePosition,
+    updateConnection,
+    deleteNode,
+    deleteConnection
+  } = useAppStore();
+
+  // ReactFlow states
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const [selectedNode, setSelectedNode] = useState<Node | null>(null);
+  const [selectedEdge, setSelectedEdge] = useState<Edge | null>(null);
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+
+  // Get ReactFlow instance for programmatic control
+  const reactFlowInstance = useReactFlow();
+
+  // Get animation presets
+  const { uiAnimations, viewAnimations } = useCanvasAnimations();
 
   // Load project on mount
   useEffect(() => {
@@ -42,18 +80,15 @@ const Canvas: React.FC = () => {
     if (currentProject) {
       const flowNodes: Node[] = currentProject.nodes.map(node => ({
         id: node.id,
-        type: 'default',
+        type: 'mindNode',
         position: node.position,
         data: {
-          label: (
-            <div className="px-4 py-2 bg-white rounded-lg shadow-lg border border-gray-200">
-              <div className="font-semibold text-gray-800">{node.title}</div>
-              {node.content && (
-                <div className="text-sm text-gray-600 mt-1">{node.content}</div>
-              )}
-            </div>
-          ),
+          title: node.title,
+          content: node.content,
+          color: node.color || (mode === 'dark' ? '#3b82f6' : '#2563eb'),
         },
+        // Pass accessibility attributes and data-testid
+        dragHandle: '.node-drag-handle',
       }));
       setNodes(flowNodes);
 
@@ -62,45 +97,184 @@ const Canvas: React.FC = () => {
         source: conn.sourceNodeId,
         target: conn.targetNodeId,
         label: conn.label,
-        style: { stroke: conn.color || '#3b82f6' },
+        // Use CSS variables to respect the theme
+        style: { 
+          stroke: conn.color || 'var(--color-primary)', 
+          strokeWidth: 2,
+        },
         animated: conn.animated || false,
+        // Add accessibility attributes
+        ariaLabel: `Connection from ${conn.sourceNodeId} to ${conn.targetNodeId}${conn.label ? ': ' + conn.label : ''}`,
       }));
       setEdges(flowEdges);
     }
-  }, [currentProject, setNodes, setEdges]);
+  }, [currentProject, setNodes, setEdges, mode]);
 
+  // Handle node selection
+  const onNodeClick = useCallback((event: React.MouseEvent, node: Node) => {
+    setSelectedNode(node);
+  }, []);
+
+  // Handle edge selection
+  const onEdgeClick = useCallback((event: React.MouseEvent, edge: Edge) => {
+    setSelectedEdge(edge);
+  }, []);
+
+  // Clear selection when clicking on the canvas
+  const onPaneClick = useCallback(() => {
+    setSelectedNode(null);
+    setSelectedEdge(null);
+  }, []);
+
+  // Handle connection creation
   const onConnect = useCallback(
-    (params: Connection) => setEdges((eds) => addEdge(params, eds)),
-    [setEdges]
+    (params: Connection) => {
+      // Create a unique ID for the connection
+      const newConnection = {
+        id: `edge-${Date.now()}`,
+        sourceNodeId: params.source || '',
+        targetNodeId: params.target || '',
+        label: '',
+        color: 'var(--color-primary)',
+        animated: false,
+      };
+      
+      if (currentProject) {
+        // Update app store
+        updateConnection(newConnection);
+        // Update the edges state
+        setEdges((eds) => addEdge({
+          ...params,
+          id: newConnection.id,
+          style: { stroke: 'var(--color-primary)', strokeWidth: 2 },
+        }, eds));
+      }
+    },
+    [currentProject, setEdges, updateConnection]
   );
 
-  const handleAddNode = () => {
+  // Handle node position updates
+  const onNodeDragStop = useCallback(
+    (event: React.MouseEvent, node: Node) => {
+      if (currentProject) {
+        updateNodePosition(node.id, node.position);
+      }
+    },
+    [currentProject, updateNodePosition]
+  );
+
+  // Handle adding a new node
+  const handleAddNode = useCallback(() => {
     if (currentProject) {
+      // Get the current viewport to add the node in a visible area
+      const { x, y, zoom } = reactFlowInstance.getViewport();
+      
+      // Calculate a visible position based on the viewport
+      const position = {
+        x: (-x + window.innerWidth / 2 - 100) / zoom,
+        y: (-y + window.innerHeight / 2 - 100) / zoom,
+      };
+      
       const newNodeData = {
         type: 'note' as const,
-        position: { x: Math.random() * 400, y: Math.random() * 400 },
+        position,
         size: { width: 200, height: 100 },
         title: 'New Note',
         content: 'Click to edit...',
+        color: mode === 'dark' ? '#3b82f6' : '#2563eb',
       };
+      
       addNode(newNodeData);
     }
-  };
+  }, [currentProject, addNode, reactFlowInstance, mode]);
+
+  // Handle deleting a node or edge
+  const handleDelete = useCallback(() => {
+    if (selectedNode) {
+      deleteNode(selectedNode.id);
+      setSelectedNode(null);
+    } else if (selectedEdge) {
+      deleteConnection(selectedEdge.id);
+      setSelectedEdge(null);
+    }
+  }, [selectedNode, selectedEdge, deleteNode, deleteConnection]);
+
+  // Handle zooming in
+  const handleZoomIn = useCallback(() => {
+    const { zoom } = reactFlowInstance.getViewport();
+    reactFlowInstance.setViewport({ 
+      ...reactFlowInstance.getViewport(),
+      zoom: zoom + 0.2
+    });
+  }, [reactFlowInstance]);
+  
+  // Handle zooming out
+  const handleZoomOut = useCallback(() => {
+    const { zoom } = reactFlowInstance.getViewport();
+    reactFlowInstance.setViewport({ 
+      ...reactFlowInstance.getViewport(),
+      zoom: Math.max(0.2, zoom - 0.2)
+    });
+  }, [reactFlowInstance]);
+  
+  // Handle resetting the view
+  const handleResetView = useCallback(() => {
+    reactFlowInstance.fitView({ duration: 800 });
+  }, [reactFlowInstance]);
+
+  // Handle saving the canvas
+  const handleSave = useCallback(() => {
+    // For now, just show a success message
+    // In a real implementation, we would trigger a save operation in the store
+    console.log('Canvas saved successfully!');
+  }, []);
+
+  // Set up keyboard shortcuts
+  const { shortcutHelp } = useCanvasKeyboardControls({
+    onAddNode: handleAddNode,
+    onDelete: handleDelete,
+    onZoomIn: handleZoomIn,
+    onZoomOut: handleZoomOut,
+    onResetView: handleResetView,
+    onSave: handleSave,
+    enabled: true,
+  });
+
+  // Handle node edit dialog
+  const handleEditNode = useCallback(() => {
+    if (selectedNode) {
+      setIsEditDialogOpen(true);
+    }
+  }, [selectedNode]);
+
+  // Handle node edit completion
+  const handleEditComplete = useCallback((data: { title: string; content: string; color: string }) => {
+    if (selectedNode && currentProject) {
+      // Update the node in the app store
+      // This would require adding a new function to the store
+      console.log('Node updated:', { id: selectedNode.id, ...data });
+      
+      // Close the dialog
+      setIsEditDialogOpen(false);
+    }
+  }, [selectedNode, currentProject]);
 
   if (!currentProject) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
           <div className="text-4xl mb-4">🔍</div>
-          <h2 className="text-xl font-semibold text-gray-700 dark:text-gray-300">
+          <h2 className="text-xl font-semibold text-text">
             Project not found
           </h2>
-          <button
+          <Button
+            variant="primary"
+            size="md"
+            className="mt-4"
             onClick={() => navigate('/dashboard')}
-            className="mt-4 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors"
           >
             Go to Dashboard
-          </button>
+          </Button>
         </div>
       </div>
     );
@@ -110,70 +284,168 @@ const Canvas: React.FC = () => {
     <div className="h-screen flex flex-col">
       {/* Header */}
       <motion.div
-        className="flex items-center justify-between p-4 bg-white/10 dark:bg-gray-800/10 backdrop-blur-xl border-b border-white/20 dark:border-gray-700/20"
-        initial={{ opacity: 0, y: -20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5 }}
+        className="flex items-center justify-between p-4 bg-surface/90 backdrop-blur-xl border-b border-border/50"
+        initial="initial"
+        animate="animate"
+        variants={uiAnimations.toolbar}
       >
         <div className="flex items-center gap-4">
-          <button
+          <Button
+            variant="outline"
+            size="sm"
+            className="p-2 aspect-square"
             onClick={() => navigate('/dashboard')}
-            className="p-2 hover:bg-white/20 dark:hover:bg-gray-800/20 rounded-lg transition-colors"
+            aria-label="Back to dashboard"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
             </svg>
-          </button>
+          </Button>
           <div>
-            <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
+            <h1 className="text-xl font-semibold text-text">
               {currentProject?.title || "Untitled Project"}
             </h1>
             {currentProject?.description && (
-              <p className="text-sm text-gray-600 dark:text-gray-400">
+              <p className="text-sm text-text/70">
                 {currentProject.description}
               </p>
             )}
           </div>
         </div>
-
-        <div className="flex items-center gap-2">
-          <button
-            onClick={handleAddNode}
-            className="px-4 py-2 bg-gradient-to-r from-primary-600 to-secondary-600 text-white rounded-lg hover:from-primary-700 hover:to-secondary-700 transition-all flex items-center gap-2"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-            </svg>
-            Add Node
-          </button>
-        </div>
-      </motion.div>
-
-      {/* Canvas */}
-      <motion.div
-        className="flex-1"
-        initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ opacity: 1, scale: 1 }}
-        transition={{ duration: 0.5, delay: 0.2 }}
-      >
-        <ReactFlow
-          nodes={nodes}
-          edges={edges}
-          onNodesChange={onNodesChange}
-          onEdgesChange={onEdgesChange}
-          onConnect={onConnect}
-          defaultViewport={{
-            x: currentProject?.viewState?.pan?.x || 0,
-            y: currentProject?.viewState?.pan?.y || 0,
-            zoom: currentProject?.viewState?.zoom || 1
-          }}
-          fitView
-          className="bg-gradient-to-br from-slate-50 via-blue-50 to-purple-50 dark:from-slate-900 dark:via-blue-900 dark:to-purple-900"
+        
+        {/* Toggle sidebar button */}
+        <Button
+          variant="outline"
+          size="sm"
+          className="mr-2"
+          onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+          aria-label={isSidebarOpen ? "Hide sidebar" : "Show sidebar"}
         >
-          <Controls className="bg-white/10 dark:bg-gray-800/10 backdrop-blur-xl border border-white/20 dark:border-gray-700/20" />
-          <Background color="#3b82f6" gap={20} size={1} className="opacity-20" />
-        </ReactFlow>
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path 
+              strokeLinecap="round" 
+              strokeLinejoin="round" 
+              strokeWidth={2} 
+              d={isSidebarOpen 
+                ? "M4 6h16M4 12h10M4 18h16" 
+                : "M4 6h16M4 12h16M4 18h16"} 
+            />
+          </svg>
+        </Button>
       </motion.div>
+
+      {/* Canvas Container */}
+      <div className="flex-1 flex">
+        {/* Sidebar */}
+        <AnimatePresence>
+          {isSidebarOpen && (
+            <CanvasSidebar
+              nodes={nodes.map(node => ({
+                id: node.id,
+                data: {
+                  title: node.data.title,
+                  content: node.data.content
+                },
+                position: node.position
+              }))}
+              onNodeSelect={(nodeId) => {
+                const node = nodes.find(n => n.id === nodeId);
+                if (node) {
+                  setSelectedNode(node);
+                  // Center the view on the selected node
+                  reactFlowInstance.setCenter(node.position.x, node.position.y, { duration: 800 });
+                }
+              }}
+              onSidebarClose={() => setIsSidebarOpen(false)}
+              onExport={() => console.log('Export')}
+              onImport={() => console.log('Import')}
+            />
+          )}
+        </AnimatePresence>
+        
+        {/* Main Flow Area */}
+        <motion.div
+          className="flex-1 relative"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.5 }}
+        >
+          <ReactFlow
+            nodes={nodes}
+            edges={edges}
+            nodeTypes={nodeTypes}
+            onNodesChange={onNodesChange}
+            onEdgesChange={onEdgesChange}
+            onNodeClick={onNodeClick}
+            onEdgeClick={onEdgeClick}
+            onPaneClick={onPaneClick}
+            onConnect={onConnect}
+            onNodeDragStop={onNodeDragStop}
+            defaultViewport={{
+              x: currentProject?.viewState?.pan?.x || 0,
+              y: currentProject?.viewState?.pan?.y || 0,
+              zoom: currentProject?.viewState?.zoom || 1
+            }}
+            fitView
+            className="bg-background/50 dark:bg-background-dark/80"
+            proOptions={{ hideAttribution: true }}
+          >
+            <Background color="var(--color-primary)" gap={20} size={1} className="opacity-10" />
+            
+            {/* Toolbar Panel */}
+            <Panel position="top-center" className="mt-4">
+              <CanvasToolbar
+                onAddNode={handleAddNode}
+                onSave={handleSave}
+                onUndo={() => console.log('Undo')}
+                onRedo={() => console.log('Redo')}
+                onZoomIn={handleZoomIn}
+                onZoomOut={handleZoomOut}
+                onResetView={handleResetView}
+              />
+            </Panel>
+            
+            {/* Node Controls Panel - Shown only when a node is selected */}
+            <AnimatePresence>
+              {selectedNode && (
+                <Panel position="bottom-center" className="mb-4">
+                  <CanvasControls
+                    onConnect={() => console.log('Connect')}
+                    onDelete={handleDelete}
+                    onDuplicate={() => console.log('Duplicate')}
+                    onGroup={() => console.log('Group')}
+                    onUngroup={() => console.log('Ungroup')}
+                    disableConnect={!selectedNode}
+                    disableDelete={!selectedNode && !selectedEdge}
+                  />
+                </Panel>
+              )}
+            </AnimatePresence>
+            
+            {/* Help Panel */}
+            <Panel position="bottom-right" className="mr-4 mb-4">
+              <KeyboardShortcutsHelp shortcuts={shortcutHelp} />
+            </Panel>
+          </ReactFlow>
+
+          {/* Node Edit Dialog */}
+          <Dialog
+            isOpen={isEditDialogOpen}
+            onClose={() => setIsEditDialogOpen(false)}
+            title="Edit Node"
+          >
+            {selectedNode && (
+              <NodeEditDialog
+                initialTitle={selectedNode.data.title || ''}
+                initialContent={selectedNode.data.content || ''}
+                initialColor={selectedNode.data.color || '#3b82f6'}
+                onSave={handleEditComplete}
+                onCancel={() => setIsEditDialogOpen(false)}
+              />
+            )}
+          </Dialog>
+        </motion.div>
+      </div>
     </div>
   );
 };

@@ -18,8 +18,10 @@ interface AppStore extends AppState {
   deselectAllNodes: () => void;
   
   // Connection actions
+  updateNodePosition: (nodeId: string, position: Position) => void;
+  updateConnection: (connection: Omit<Connection, 'id'>) => void;
   addConnection: (connection: Omit<Connection, 'id'>) => void;
-  updateConnection: (connectionId: string, updates: Partial<Connection>) => void;
+  updateConnectionById: (connectionId: string, updates: Partial<Connection>) => void;
   deleteConnection: (connectionId: string) => void;
   
   // Canvas actions
@@ -165,6 +167,20 @@ export const useAppStore = create<AppStore>()(
           get().updateProject(currentProject.id, { nodes: updatedNodes });
         },
         
+        // Update node position
+        updateNodePosition: (nodeId: string, position: Position) => {
+          const { currentProject } = get();
+          if (!currentProject) return;
+          
+          const updatedNodes = currentProject.nodes.map(node =>
+            node.id === nodeId 
+              ? { ...node, position, updatedAt: new Date() }
+              : node
+          );
+          
+          get().updateProject(currentProject.id, { nodes: updatedNodes });
+        },
+        
         // Connection actions
         addConnection: (connectionData) => {
           const newConnection: Connection = {
@@ -184,7 +200,35 @@ export const useAppStore = create<AppStore>()(
           get().updateProject(currentProject.id, updatedProject);
         },
         
-        updateConnection: (connectionId: string, updates: Partial<Connection>) => {
+        // Add a new connection directly
+        updateConnection: (connectionData) => {
+          const newConnection: Connection = {
+            ...connectionData,
+            id: generateUUID(),
+          };
+          
+          const { currentProject } = get();
+          if (!currentProject) return;
+          
+          // Check if connection already exists
+          const connectionExists = currentProject.connections.some(
+            conn => conn.id === newConnection.id
+          );
+          
+          const updatedConnections = connectionExists
+            ? currentProject.connections.map(conn => 
+                conn.id === newConnection.id ? newConnection : conn
+              )
+            : [...currentProject.connections, newConnection];
+          
+          get().updateProject(currentProject.id, { 
+            connections: updatedConnections,
+            updatedAt: new Date(),
+          });
+        },
+        
+        // Update an existing connection
+        updateConnectionById: (connectionId: string, updates: Partial<Connection>) => {
           const { currentProject } = get();
           if (!currentProject) return;
           
