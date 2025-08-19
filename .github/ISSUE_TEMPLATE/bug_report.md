@@ -1,13 +1,12 @@
 ---
-name: Bug report
+name: Bug Report
 about: Create a report to help us improve MindCanvas
 title: '[BUG] '
-labels: 'bug'
+labels: bug
 assignees: ''
-
 ---
 
-## Description
+## Bug Description
 A clear and concise description of what the bug is.
 
 ## Steps To Reproduce
@@ -20,16 +19,19 @@ A clear and concise description of what the bug is.
 A clear and concise description of what you expected to happen.
 
 ## Actual Behavior
-A clear and concise description of what actually happened.
+What actually happened instead.
 
 ## Screenshots
 If applicable, add screenshots to help explain your problem.
 
 ## Environment
- - Device: [e.g., Desktop, iPhone 13]
- - OS: [e.g., Windows 11, macOS 12.3, iOS 15.4]
- - Browser: [e.g., Chrome 101, Firefox 99, Safari 15.4]
- - MindCanvas Version: [e.g., 0.1.0]
+- OS: [e.g. Windows, macOS, Linux]
+- Browser: [e.g. Chrome, Firefox, Safari]
+- Version: [e.g. 22]
+- Device: [e.g. Desktop, iPhone 13]
 
 ## Additional Context
 Add any other context about the problem here.
+
+## Possible Solution
+If you have any ideas on how to solve the issue, please share them here.
