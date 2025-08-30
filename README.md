@@ -5,7 +5,7 @@ MindCanvas is a modern, web-based application that allows users to create, visua
 ## 📋 Problem Statement
 
 In today's information-rich world, people struggle to:
-- Organize complex ideas and knowledge in an intuitive way 
+- Organize complex ideas and knowledge in an intuitive way  
 - Visualize connections between different concepts
 - Collaborate on thought processes with others
 - Maintain context when working with large amounts of information
